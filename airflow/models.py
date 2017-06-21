@@ -763,6 +763,10 @@ class TaskInstance(Base):
     operator = Column(String(1000))
     queued_dttm = Column(DateTime)
     pid = Column(Integer)
+    cpus = Column(Float)
+    ram = Column(Float)
+    disk = Column(Float)
+    gpus = Column(Float)
 
     __table_args__ = (
         Index('ti_dag_state', dag_id, state),
@@ -785,6 +789,10 @@ class TaskInstance(Base):
         if state:
             self.state = state
         self.hostname = ''
+        self.cpus = task.resources.cpus.qty
+        self.ram = task.resources.ram.qty
+        self.disk = task.resources.disk.qty
+        self.gpus = task.resources.gpus.qty
         self.init_on_load()
 
     @reconstructor
@@ -1023,6 +1031,10 @@ class TaskInstance(Base):
             self.try_number = ti.try_number
             self.hostname = ti.hostname
             self.pid = ti.pid
+            self.cpus = ti.cpus
+            self.ram = ti.ram
+            self.disk = ti.disk
+            self.gpus = ti.gpus
         else:
             self.state = None
 
