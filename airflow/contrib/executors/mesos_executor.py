@@ -125,11 +125,11 @@ class AirflowMesosScheduler(mesos.interface.Scheduler):
 
             while (not self.task_queue.empty()):
             
-                key, cmd, cpus, mem, disk, gpus = self.task_queue.get()
+                key, cmd, cpus, ram, disk, gpus = self.task_queue.get()
 
                 if remainingCpus >= cpus and \
                   remainingGpus >= gpus and \
-                  remainingMem >= mem:
+                  remainingMem >= ram:
                   
                     tid = self.task_counter
                     self.task_counter += 1
@@ -170,7 +170,7 @@ class AirflowMesosScheduler(mesos.interface.Scheduler):
 
                 else:
                     # We were not able to schedule this task, save it in a separate queue
-                    rejectedQueue.put((key, cmd, cpus, mem, gpus))
+                    rejectedQueue.put((key, cmd, cpus, ram, disk, gpus))
 
             # Place any entries from the rejectedQueue back in the task queue
             while (not rejectedQueue.empty()):
