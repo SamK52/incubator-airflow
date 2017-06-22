@@ -52,13 +52,9 @@ class AirflowMesosScheduler(mesos.interface.Scheduler):
 
     def __init__(self,
                  task_queue,
-                 result_queue,
-                 task_cpu=1,
-                 task_mem=256):
+                 result_queue):
         self.task_queue = task_queue
         self.result_queue = result_queue
-        self.task_cpu = task_cpu
-        self.task_mem = task_mem
         self.task_counter = 0
         self.task_key_map = {}
 
@@ -110,51 +106,77 @@ class AirflowMesosScheduler(mesos.interface.Scheduler):
             tasks = []
             offerCpus = 0
             offerMem = 0
+            offerGpus = 0
             for resource in offer.resources:
                 if resource.name == "cpus":
                     offerCpus += resource.scalar.value
                 elif resource.name == "mem":
                     offerMem += resource.scalar.value
+                elif resource.name == "gpus":
+                    offerGpus += resource.scalar.value
 
-            logging.info("Received offer %s with cpus: %s and mem: %s", offer.id.value, offerCpus, offerMem)
+            logging.info("Received offer %s with cpus: %s, mem: %s and gpus: %s", offer.id.value, offerCpus, offerMem, offerGpus)
 
             remainingCpus = offerCpus
             remainingMem = offerMem
+            remainingGpus = offerGpus
+            
+            rejectedQueue = Queue()
 
-            while (not self.task_queue.empty()) and \
-                  remainingCpus >= self.task_cpu and \
-                  remainingMem >= self.task_mem:
-                key, cmd = self.task_queue.get()
-                tid = self.task_counter
-                self.task_counter += 1
-                self.task_key_map[str(tid)] = key
+            while (not self.task_queue.empty()):
+            
+                key, cmd, cpus, ram, disk, gpus = self.task_queue.get()
 
-                logging.info("Launching task %d using offer %s", tid, offer.id.value)
+                if remainingCpus >= cpus and \
+                  remainingGpus >= gpus and \
+                  remainingMem >= ram:
+                  
+                    tid = self.task_counter
+                    self.task_counter += 1
+                    self.task_key_map[str(tid)] = key
 
-                task = mesos_pb2.TaskInfo()
-                task.task_id.value = str(tid)
-                task.slave_id.value = offer.slave_id.value
-                task.name = "AirflowTask %d" % tid
+                    logging.info("Launching task %d using offer %s", tid, offer.id.value)
 
-                cpus = task.resources.add()
-                cpus.name = "cpus"
-                cpus.type = mesos_pb2.Value.SCALAR
-                cpus.scalar.value = self.task_cpu
+                    task = mesos_pb2.TaskInfo()
+                    task.task_id.value = str(tid)
+                    task.slave_id.value = offer.slave_id.value
+                    task.name = "AirflowTask %d" % tid
 
-                mem = task.resources.add()
-                mem.name = "mem"
-                mem.type = mesos_pb2.Value.SCALAR
-                mem.scalar.value = self.task_mem
+                    task_cpus = task.resources.add()
+                    task_cpus.name = "cpus"
+                    task_cpus.type = mesos_pb2.Value.SCALAR
+                    task_cpus.scalar.value = cpus
 
-                command = mesos_pb2.CommandInfo()
-                command.shell = True
-                command.value = cmd
-                task.command.MergeFrom(command)
+                    task_mem = task.resources.add()
+                    task_mem.name = "mem"
+                    task_mem.type = mesos_pb2.Value.SCALAR
+                    task_mem.scalar.value = ram
 
-                tasks.append(task)
+                    task_gpus = task.resources.add()
+                    task_gpus.name = "gpus"
+                    task_gpus.type = mesos_pb2.Value.SCALAR
+                    task_gpus.scalar.value = gpus
 
-                remainingCpus -= self.task_cpu
-                remainingMem -= self.task_mem
+                    command = mesos_pb2.CommandInfo()
+                    command.shell = True
+                    command.value = cmd
+                    task.command.MergeFrom(command)
+
+                    tasks.append(task)
+
+                    remainingCpus -= cpus
+                    remainingMem -= ram
+                    remainingGpus -= gpus
+
+                else:
+                    # We were not able to schedule this task, save it in a separate queue
+                    rejectedQueue.put((key, cmd, cpus, ram, disk, gpus))
+
+            # Place any entries from the rejectedQueue back in the task queue
+            while (not rejectedQueue.empty()):
+                key, cmd, cpus, ram, disk, gpus= rejectedQueue.get()
+                self.task_queue.put((key, cmd, cpus, ram, disk, gpus))
+                self.task_queue.task_done()
 
             driver.launchTasks(offer.id, tasks)
 
@@ -207,16 +229,6 @@ class MesosExecutor(BaseExecutor):
 
         framework.name = get_framework_name()
 
-        if not configuration.get('mesos', 'TASK_CPU'):
-            task_cpu = 1
-        else:
-            task_cpu = configuration.getint('mesos', 'TASK_CPU')
-
-        if not configuration.get('mesos', 'TASK_MEMORY'):
-            task_memory = 256
-        else:
-            task_memory = configuration.getint('mesos', 'TASK_MEMORY')
-
         if configuration.getboolean('mesos', 'CHECKPOINT'):
             framework.checkpoint = True
 
@@ -236,8 +248,8 @@ class MesosExecutor(BaseExecutor):
         else:
             framework.checkpoint = False
 
-        logging.info('MesosFramework master : %s, name : %s, cpu : %s, mem : %s, checkpoint : %s',
-            master, framework.name, str(task_cpu), str(task_memory), str(framework.checkpoint))
+        logging.info('MesosFramework master : %s, name : %s, checkpoint : %s',
+            master, framework.name, str(framework.checkpoint))
 
         implicit_acknowledgements = 1
 
@@ -256,7 +268,7 @@ class MesosExecutor(BaseExecutor):
             framework.principal = credential.principal
 
             driver = mesos.native.MesosSchedulerDriver(
-                AirflowMesosScheduler(self.task_queue, self.result_queue, task_cpu, task_memory),
+                AirflowMesosScheduler(self.task_queue, self.result_queue),
                 framework,
                 master,
                 implicit_acknowledgements,
@@ -264,7 +276,7 @@ class MesosExecutor(BaseExecutor):
         else:
             framework.principal = 'Airflow'
             driver = mesos.native.MesosSchedulerDriver(
-                AirflowMesosScheduler(self.task_queue, self.result_queue, task_cpu, task_memory),
+                AirflowMesosScheduler(self.task_queue, self.result_queue),
                 framework,
                 master,
                 implicit_acknowledgements)
@@ -272,8 +284,8 @@ class MesosExecutor(BaseExecutor):
         self.mesos_driver = driver
         self.mesos_driver.start()
 
-    def execute_async(self, key, command, queue=None):
-        self.task_queue.put((key, command))
+    def execute_async(self, key, command, queue=None, cpus=1, ram=128, disk=128, gpus=0):
+        self.task_queue.put((key, command, cpus, ram, disk, gpus))
 
     def sync(self):
         while not self.result_queue.empty():
