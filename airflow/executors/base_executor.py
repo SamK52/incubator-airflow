@@ -132,7 +132,8 @@ class BaseExecutor(LoggingMixin):
         self.sync()
 
     def change_state(self, key, state):
-        self.running.pop(key)
+	if key in self.running:
+            self.running.pop(key)
         self.event_buffer[key] = state
 
     def fail(self, key):
