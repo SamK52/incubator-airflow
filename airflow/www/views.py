@@ -951,14 +951,14 @@ class Airflow(BaseView):
 
         try:
             from airflow.executors import GetDefaultExecutor
-            from airflow.executors import CeleryExecutor
+            from airflow.contrib.executors.mesos_executor import MesosExecutor
             executor = GetDefaultExecutor()
-            if not isinstance(executor, CeleryExecutor):
-                flash("Only works with the CeleryExecutor, sorry", "error")
+            if not isinstance(executor, MesosExecutor):
+                flash("Only works with the MesosExecutor, sorry", "error")
                 return redirect(origin)
         except ImportError:
-            # in case CeleryExecutor cannot be imported it is not active either
-            flash("Only works with the CeleryExecutor, sorry", "error")
+            # in case MesosExecutor cannot be imported it is not active either
+            flash("Could not import the MesosExecutor, sorry", "error")
             return redirect(origin)
 
         ti = models.TaskInstance(task=task, execution_date=execution_date)
