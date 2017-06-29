@@ -135,12 +135,13 @@ class AirflowMesosScheduler(mesos.interface.Scheduler):
                     self.task_counter += 1
                     self.task_key_map[str(tid)] = key
 
-                    logging.info("Launching task %d using offer %s", tid, offer.id.value)
+                    logging.info("Launching task %d using %f cpus and %d memory from offer %s", tid, cpus, ram, offer.id.value)
 
                     task = mesos_pb2.TaskInfo()
                     task.task_id.value = str(tid)
                     task.slave_id.value = offer.slave_id.value
-                    task.name = "AirflowTask %d" % tid
+                    #task.name = "AirflowTask %d" % tid
+                    task.name = "Airflow DAG:%s TASK:%s FOR:%s" % key
 
                     task_cpus = task.resources.add()
                     task_cpus.name = "cpus"
@@ -167,6 +168,8 @@ class AirflowMesosScheduler(mesos.interface.Scheduler):
                     remainingCpus -= cpus
                     remainingMem -= ram
                     remainingGpus -= gpus
+
+                    logging.info("Remaining resources for offer %s: cpus: %s, mem: %s and gpus: %s", offer.id.value, remainingCpus, remainingMem, remainingGpus)
 
                 else:
                     # We were not able to schedule this task, save it in a separate queue
